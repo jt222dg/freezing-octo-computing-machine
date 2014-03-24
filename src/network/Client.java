@@ -13,16 +13,21 @@ import java.util.Random;
 
 public class Client
 {
-	//private String 				 _data;
+	private String 		     	 _data;
 	private DatagramSocket 		 _socket;
 	private List<ConnectionInfo> _otherClientsInfo;
-	private ConnectionInfo _info;
+	private ConnectionInfo 		 _info;
+	private boolean 			 _isServer = false;
+	private int 				 _numbClientsThatHasAnswered = 0;
+	private long 			     _startTime = 0;
+	private long 				 _stopTime = 0;
+	private int 				_numbReceivedDatas = 0;
+	private boolean 			_testHasStarted = false;
 	
 	public Client()
 	{
 		this._otherClientsInfo = new LinkedList<ConnectionInfo>();
 		this._otherClientsInfo = Collections.synchronizedList(this._otherClientsInfo);
-		this.generateKBsOfData(30);
 	}
 	
 	public void send(String string) throws IOException, UnknownHostException
@@ -138,9 +143,73 @@ public class Client
 					
 					break;
 				}
-				default:
+				case Message.RunTest :
 				{
-					System.out.println(receivedData);
+					if (!this._isServer)
+					{
+						this.generateKBsOfData(30 / this._otherClientsInfo.size());
+						this.send(Message.IsReady);
+					}
+					
+					break;
+				}
+				case Message.IsReady :
+				{
+					if (this._isServer)
+					{
+						this._numbClientsThatHasAnswered++;
+						if (this._numbClientsThatHasAnswered == this._otherClientsInfo.size())
+						{
+							this._startTime = System.currentTimeMillis();
+							this._numbClientsThatHasAnswered = 0;
+							
+							System.out.println("Test starting");
+							this.send(Message.Start);
+						}
+					}
+					
+					break;
+				}
+				case Message.Start :
+				{
+					if (!this._isServer)
+					{
+						this._testHasStarted = true;
+						this.send(this._data);
+					}
+					
+					break;
+				}
+				case Message.Done :
+				{
+					if (this._isServer)
+					{
+						this._numbClientsThatHasAnswered++;
+					
+						if (this._numbClientsThatHasAnswered == this._otherClientsInfo.size())
+						{
+							this._stopTime = System.currentTimeMillis();
+							this._numbClientsThatHasAnswered = 0;
+							
+							System.out.println("Test done: " + (this._stopTime - this._startTime) + " milliseconds");
+						}
+					}
+					
+					break;
+				}
+				default: // When receiving test data
+				{
+					if (!this._isServer && this._testHasStarted)
+					{
+						this._numbReceivedDatas++;
+						
+						if (_numbReceivedDatas == this._otherClientsInfo.size())
+						{
+							this._numbReceivedDatas = 0;
+							this.send(Message.Done);
+						}
+					}
+					
 					break;
 				}
 			}
@@ -164,7 +233,7 @@ public class Client
 		    builder.append(c);
 		}
 
-		//this._data = builder.toString();
+		this._data = builder.toString();
 	}
 
 	public void connect(int port, InetAddress ipAddress) throws SocketException
@@ -174,6 +243,7 @@ public class Client
 			this._socket = null;
 			if (ipAddress == null) // "Server"
 			{
+				this._isServer  = true;
 				this._socket = new DatagramSocket(port);
 				System.out.println("Connected as server");
 			}
