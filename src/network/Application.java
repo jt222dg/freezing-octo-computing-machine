@@ -1,66 +1,72 @@
 package network;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.InetAddress;
 import java.net.UnknownHostException;
 
-public class Application implements Runnable {
-
-	public Application(int port, String group) {
-		this.port = port;
-		this.group = group;
-		this.client = new Client(this.port, this.group);
+public class Application implements Runnable
+{
+	private Client 		_client;
+	private int		 	_port;
+	private InetAddress _ipAddress;
+	
+	public Application(int port, InetAddress ipAddress)
+	{
+		this._client = new Client();
+		
+		this._port 		= port;
+		this._ipAddress = ipAddress;
 	}
 	
 	@Override
-	public void run() {
-		
-		try {
-			this.client.joinGroup();
-			System.out.println("joined group..");
-			this.client.send("add client");
+	public void run()
+	{
+		try
+		{
+			this._client.connect(this._port, this._ipAddress);
 			
-			while (true) {
-				this.client.receive();
+			while (true)
+			{
+				this._client.receive();
 			}
-			
-		} catch (UnknownHostException e) {
+		}
+		catch (Exception e)
+		{
 			System.err.println(e.getMessage());
 			System.exit(1);
-		} catch (IOException e) {
-			System.err.println(e.getMessage());
-			System.exit(1);
-		} catch (Exception e) {
-			System.err.println(e.getMessage());
-			System.exit(1);
-		} finally {
-			try {
-				client.leaveGroup();
-				System.out.println("left group..");
-			} catch (IOException e) {
+		}
+		finally
+		{
+			try
+			{
+				this._client.close(); 
+			}
+			catch (Exception e)
+			{
 				e.printStackTrace();
+				System.exit(1);
 			}
 		}
 	}
 	
-	public void send() throws UnknownHostException, IOException {
-		try {
-			while (true) {
-				String string = System.console().readLine();
-				this.client.send(string);
+	public void send() throws UnknownHostException, IOException
+	{
+		try
+		{
+			while (true)
+			{
+				InputStreamReader sr = new InputStreamReader(System.in);
+				BufferedReader br 	 = new BufferedReader(sr);
+				String input 		 = br.readLine();
+				this._client.send(input);
 			}
-		} catch (UnknownHostException e) {
-			System.err.println(e.getMessage());
-			System.exit(1);
-		} catch (IOException e) {
-			System.err.println(e.getMessage());
-			System.exit(1);
-		} catch (Exception e) {
-			System.err.println(e.getMessage());
+		}
+		catch (Exception e)
+		{
+			e.printStackTrace();
 			System.exit(1);
 		}
 	}
-	
-	private Client client;
-	private int port;
-	private String group;
 }

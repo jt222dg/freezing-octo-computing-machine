@@ -2,112 +2,152 @@ package network;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.InetAddress;
-import java.net.MulticastSocket;
+import java.net.SocketException;
 import java.net.UnknownHostException;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Random;
 
-public class Client {
-	public Client(int port, String group) {
-		this.port          = port;
-		this.group         = group;
-		this.isTestStarter = false;
+public class Client
+{
+	//private String 				 _data;
+	private DatagramSocket 		 _socket;
+	private List<ConnectionInfo> _otherClientsInfo;
+	private ConnectionInfo _info;
+	
+	public Client()
+	{
+		this._otherClientsInfo = new LinkedList<ConnectionInfo>();
+		this._otherClientsInfo = Collections.synchronizedList(this._otherClientsInfo);
 		this.generateKBsOfData(30);
-		this.numOtherClients = 0;
-		this.numbClientsAnswered = 0;
-		
-		this.startTime = 0;
-		this.endTime = 0;
 	}
 	
-	public void joinGroup() throws UnknownHostException, IOException {
-		try {
-			this.socket = new MulticastSocket(port);
-			this.socket.joinGroup(InetAddress.getByName(this.group));
-		} catch (UnknownHostException e) {
-			System.err.println(e.getMessage());
-			System.exit(1);
-		} catch (IOException e) {
-			System.err.println(e.getMessage());
-			System.exit(1);
-		} catch (Exception e) {
-			System.err.println(e.getMessage());
-			System.exit(1);
+	public void send(String string) throws IOException, UnknownHostException
+	{
+		for (ConnectionInfo clientInfo : this._otherClientsInfo)
+		{
+			this.send(string, clientInfo.getPort(), clientInfo.getAddress());
 		}
 	}
 	
-	public void leaveGroup() throws UnknownHostException, IOException {
-		if (this.socket != null) {
-			try {
-				this.socket.leaveGroup(InetAddress.getByName(this.group));
-				this.socket.close();
-			} catch (UnknownHostException e) {
-				System.err.println(e.getMessage());
-				System.exit(1);
-			} catch (IOException e) {
-				System.err.println(e.getMessage());
-				System.exit(1);
-			} catch (Exception e) {
-				System.err.println(e.getMessage());
-				System.exit(1);
-			} 
-		}
-	}
-	
-	public void send(String string) throws IOException, UnknownHostException {
-		try {
-			if (string.equalsIgnoreCase("run test")) {
-				this.isTestStarter = true;
-				this.startTime = System.currentTimeMillis();
-			}
-			
+	public void send(String string, int port, InetAddress ipAddress) throws IOException, UnknownHostException
+	{
+		try
+		{
 			byte[] buffer = string.getBytes();
-			DatagramPacket packet = new DatagramPacket(buffer, buffer.length, InetAddress.getByName(this.group), this.port);
-			this.socket.send(packet);
-		} catch (UnknownHostException e) {
-			System.err.println(e.getMessage());
-			System.exit(1);
-		} catch (IOException e) {
-			System.err.println(e.getMessage());
-			System.exit(1);
-		} catch (Exception e) {
+			DatagramPacket packet = null;
+			
+			packet = new DatagramPacket(buffer, buffer.length, ipAddress, port);
+			this._socket.send(packet);
+		}
+		catch (Exception e)
+		{
 			System.err.println(e.getMessage());
 			System.exit(1);
 		} 
 	}
 	
-	public void receive() throws IOException {
+	public String receiveString() throws IOException
+	{
+		byte[] buffer = new byte[30000];
+		DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+		this._socket.receive(packet);
+		return new String(buffer, 0, packet.getLength());
+	}
+	
+	public void receive() throws IOException
+	{
 		byte[] buffer = new byte[30000];
 		DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
 		
-		try {
-			this.socket.receive(packet);
+		try
+		{
+			this._socket.receive(packet);
 			String receivedData = new String(buffer, 0, packet.getLength());
-			System.out.println(receivedData);
 			
-			if (receivedData.equalsIgnoreCase("add client")) {
-				this.numOtherClients++;
-			} else if (!receivedData.equalsIgnoreCase("run test")) {
-				if (this.isTestStarter) {
-					this.numbClientsAnswered++;
+			switch (receivedData)
+			{
+				case Message.Connect : // Only server receives this
+				{
+					// Add to server
+					ConnectionInfo info = new ConnectionInfo(packet.getPort(), packet.getAddress());
+					if (!this._otherClientsInfo.contains(info))
+					{
+						this._otherClientsInfo.add(info);
+					}
+					
+					this.send(Message.SetOwnAddress, packet.getPort(), packet.getAddress());
+					this.send(packet.getPort() + ":" + packet.getAddress().getHostAddress());
+					
+					for (ConnectionInfo ci : _otherClientsInfo)
+					{
+						String newClientInfo = ci.getPort() + ":" + ci.getAddress().getHostAddress();
+						this.send(Message.AddClient);
+						this.send(newClientInfo);
+					}
+					
+					System.out.println("Client connected.");
+					
+					break;
 				}
-			} else if (receivedData.equalsIgnoreCase("run test")) {
-				//System.out.println("running test..");
-				this.send(this.data);
+				case Message.AddClient : 
+				{
+					String[] clientInfo = this.receiveString().split(":");
+					
+					// If client has same IP as server
+					if (clientInfo[1].equalsIgnoreCase("127.0.0.1"))
+					{
+						clientInfo[1] = packet.getAddress().getHostAddress();
+					}
+						
+					int port = Integer.parseInt(clientInfo[0]);
+					InetAddress address = InetAddress.getByName(clientInfo[1]);
+					
+					// Add to client
+					ConnectionInfo info = new ConnectionInfo(port, address);
+					
+					if (!info.equals(this._info))
+					{
+						if (!this._otherClientsInfo.contains(info))
+						{
+							this._otherClientsInfo.add(info);
+							System.out.println("Added client with port " + info.getPort() + " and ip " + info.getAddress().getHostAddress());
+						}
+					}
+					
+					break;
+				}
+				case Message.SetOwnAddress :
+				{
+					String[] clientInfo = this.receiveString().split(":");
+					
+					// If client has same IP as server
+					if (clientInfo[1].equalsIgnoreCase(_otherClientsInfo.get(0).getAddress().getHostAddress()))
+					{
+						clientInfo[1] = packet.getAddress().getHostAddress();
+					}
+						
+					int port = Integer.parseInt(clientInfo[0]);
+					InetAddress address = InetAddress.getByName(clientInfo[1]);
+					
+					// Add to client
+					this._info = new ConnectionInfo(port, address);
+					
+					break;
+				}
+				default:
+				{
+					System.out.println(receivedData);
+					break;
+				}
 			}
-			
-			if (this.numbClientsAnswered == this.numOtherClients) {
-				this.endTime = System.currentTimeMillis();
-				//System.out.println("all clients answered");
-				//System.out.println("Time taken: " + (this.endTime - this.startTime) + " milliseconds.");
-				
-				this.numbClientsAnswered = 0;
-			}
-		} catch (IOException e) {
-			System.err.println(e.getMessage());
-			System.exit(1);
-		} catch (Exception e) {
-			System.err.println(e.getMessage());
+		}
+		catch (Exception e)
+		{
+			e.printStackTrace();
 			System.exit(1);
 		} 
 	}
@@ -118,23 +158,54 @@ public class Client {
 		StringBuilder builder = new StringBuilder();
 		Random random = new Random();
 
-		for (int i = 0; i < kb * 10; i++) {
+		for (int i = 0; i < kb * 10; i++)
+		{
 		    char c = chars[random.nextInt(chars.length)];
 		    builder.append(c);
 		}
 
-		this.data = builder.toString();
+		//this._data = builder.toString();
 	}
 
+	public void connect(int port, InetAddress ipAddress) throws SocketException
+	{
+		try
+		{
+			this._socket = null;
+			if (ipAddress == null) // "Server"
+			{
+				this._socket = new DatagramSocket(port);
+				System.out.println("Connected as server");
+			}
+			else // Client
+			{
+				this._socket = new DatagramSocket(null);
+				
+				// Add server
+				this._otherClientsInfo.add(new ConnectionInfo(port, ipAddress));
+				this.send(Message.Connect);
+						
+				System.out.println("Connected as client");
+			}
+		}
+		catch (Exception e)
+		{
+			System.out.println(e.getMessage());
+			System.exit(1);
+		}
+	}
 	
-	private int port;
-	private String group;
-	private String data;
-	private boolean isTestStarter;
-	private int numbClientsAnswered;
-	public int numOtherClients;
-	private long startTime;
-	private long endTime;
-	
-	MulticastSocket socket;
+	public void close() throws SocketException
+	{
+		try
+		{
+			this._socket.close();
+			System.out.println("closed connection.");
+		}
+		catch (Exception e)
+		{
+			System.out.println(e.getMessage());
+			System.exit(1);
+		}
+	}
 }
